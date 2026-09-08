@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<title>HYPE-USDC short grid — execution engine</title>
+<style>
+  :root{
+    /* Sampled from the official Hyperliquid mark: mint #97FCE4 on #072723 */
+    --ink:#04120f;
+    --panel:#072723;
+    --panel-2:#0a322c;
+    --line:#0f3933;
+    --txt:#dff6f0;
+    --dim:#6d958d;
+    --mint:#97fce4;
+    --coral:#ed7088;
+    --amber:#ffc46b;
+    --violet:#b9a6ff;
+    --mono:"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans:"Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--ink);color:var(--txt);
+    font-family:var(--sans);font-size:15px;line-height:1.5}
+  body{background-image:radial-gradient(120% 60% at 12% -10%, #0a2b26 0%, var(--ink) 62%)}
+  a{color:var(--mint)}
+  .wrap{max-width:1180px;margin:0 auto;padding:22px 16px 60px}
+
+  /* ---------- masthead ---------- */
+  .brandbar{display:flex;align-items:center;gap:11px;margin-bottom:14px}
+  .brandbar img{width:26px;height:26px;display:block}
+  h1{font-size:16px;margin:0;font-weight:600;letter-spacing:-.01em}
+
+  /* ---------- price tape ---------- */
+  .tape{display:flex;flex-wrap:wrap;align-items:flex-end;gap:18px 28px;
+    border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:18px}
+  .px{font-family:var(--mono);font-size:clamp(38px,9vw,64px);font-weight:500;letter-spacing:-.03em;
+    line-height:1;font-variant-numeric:tabular-nums}
+  .px small{font-size:.3em;color:var(--dim);font-weight:400;margin-left:.45em;letter-spacing:0}
+  .up{color:var(--coral)} .down{color:var(--mint)}
+  .meta{display:flex;gap:22px;flex-wrap:wrap;padding-bottom:6px}
+  .meta div{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .meta b{display:block;color:var(--txt);font-size:15px;font-weight:400}
+  .state{margin-left:auto;padding-bottom:8px;display:flex;align-items:center;gap:10px}
+  .pill{font-family:var(--mono);font-size:12px;padding:5px 11px;border-radius:999px;
+    border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+  .pill.on{border-color:var(--mint);color:var(--mint)}
+  .pill.warn{border-color:var(--amber);color:var(--amber)}
+  .pill.off{border-color:var(--coral);color:var(--coral)}
+  .dot{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block;margin-right:6px;vertical-align:1px}
+  .live .dot{animation:blink 1.6s infinite}
+  @keyframes blink{50%{opacity:.25}}
+  @media (prefers-reduced-motion:reduce){.live .dot{animation:none}}
+
+  /* ---------- layout ---------- */
+  .cols{display:grid;grid-template-columns:280px 1fr;gap:18px;align-items:start}
+  @media(max-width:860px){.cols{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:15px}
+  .card h2{margin:0 0 12px;font-size:12px;font-weight:500;color:var(--dim)}
+
+  label{display:block;font-size:12px;color:var(--dim);margin:10px 0 4px}
+  .hint{font-family:var(--mono);font-size:11px;color:var(--dim);margin:7px 0 0}
+  input,select{width:100%;background:var(--ink);border:1px solid var(--line);color:var(--txt);
+    font-family:var(--mono);font-size:14px;padding:8px 10px;border-radius:7px}
+  input:focus,select:focus,button:focus-visible{outline:2px solid var(--mint);outline-offset:1px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .two>div{display:flex;flex-direction:column;justify-content:flex-end}
+  button{font-family:inherit;font-size:14px;font-weight:500;padding:10px 12px;border-radius:7px;
+    border:1px solid var(--line);background:var(--panel-2);color:var(--txt);cursor:pointer}
+  button:hover:not(:disabled){border-color:var(--mint);color:var(--mint)}
+  button:disabled{opacity:.3;cursor:not-allowed}
+  button.go{background:var(--mint);border-color:var(--mint);color:#04211a;font-weight:600}
+  button.go:hover:not(:disabled){color:#04211a;filter:brightness(1.08)}
+  button.stop{background:transparent;border-color:#3a2028;color:var(--coral)}
+  button.stop:hover:not(:disabled){border-color:var(--coral);color:var(--coral)}
+  .btns{display:grid;gap:8px;margin-top:16px}
+
+  /* ---------- position ---------- */
+  .rail{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:18px}
+  .rail div{background:var(--panel);padding:12px 13px}
+  .rail span{display:block;font-size:11px;color:var(--dim);margin-bottom:3px}
+  .rail b{font-family:var(--mono);font-size:19px;font-weight:500;font-variant-numeric:tabular-nums}
+  .rail b em{display:block;font-style:normal;font-size:11px;font-weight:400;color:var(--dim);margin-top:2px}
+
+  canvas{width:100%;height:180px;display:block;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums}
+  th{text-align:right;font-weight:400;color:var(--dim);font-size:11px;padding:6px 8px;border-bottom:1px solid var(--line)}
+  th:first-child,td:first-child{text-align:left}
+  td{text-align:right;padding:7px 8px;border-bottom:1px solid #0c2e29}
+  tbody tr:last-child td{border-bottom:none}
+  .empty{color:var(--dim);font-size:13px;padding:14px 2px}
+
+  /* one segment per clip: the ladder is discrete, so the gauge is too */
+  .gauge{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;margin:16px 0 7px}
+  .gauge i{height:9px;border-radius:3px;background:var(--panel-2);border:1px solid var(--line)}
+  .gauge i.on{background:var(--amber);border-color:var(--amber)}
+  .gauge i.on.max{background:var(--coral);border-color:var(--coral)}
+  .glbl{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--dim)}
+
+  #log{font-family:var(--mono);font-size:12px;height:210px;overflow:auto;background:var(--ink);
+    border:1px solid var(--line);border-radius:7px;padding:10px}
+  #log p{margin:0 0 3px;white-space:pre-wrap;word-break:break-word}
+  #log .t{color:#3f635c}
+  .c-mint{color:var(--mint)} .c-coral{color:var(--coral)} .c-amber{color:var(--amber)} .c-violet{color:var(--violet)}
+
+  .note{font-size:12.5px;color:var(--dim);border-left:2px solid var(--amber);padding-left:12px;margin:18px 0 0}
+  .sec{margin-top:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="brandbar">
+    <img src="data:image/png;base64,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" alt="Hyperliquid" width="26" height="26">
+    <h1>HYPE-USDC short grid</h1>
+  </header>
+
+  <div class="tape">
+    <div>
+      <div class="px" id="px">—<small>USDC</small></div>
+    </div>
+    <div class="meta">
+      <div>mid<b id="mid">—</b></div>
+      <div>oracle<b id="oracle">—</b></div>
+      <div>funding 1h<b id="fund">—</b></div>
+    </div>
+    <div class="state">
+      <span class="pill" id="pFeed"><i class="dot"></i>feed</span>
+      <span class="pill" id="pState">flat</span>
+    </div>
+  </div>
+
+  <div class="cols">
+
+    <!-- ======= parameters ======= -->
+    <div class="card">
+      <h2>Mandate</h2>
+      <label for="coin">Perp instrument</label>
+      <input id="coin" value="HYPE">
+      <div class="two">
+        <div><label for="lot">Clip size</label><input id="lot" type="number" step="0.1" value="5"></div>
+        <div><label for="maxsz">Exposure cap</label><input id="maxsz" type="number" step="0.1" value="35"></div>
+      </div>
+      <p class="hint" id="hNotional">&mdash;</p>
+      <div class="two">
+        <div><label for="step">Add on +%</label><input id="step" type="number" step="0.05" value="0.5"></div>
+        <div><label for="tp">Cover on -%</label><input id="tp" type="number" step="0.05" value="0.5"></div>
+      </div>
+      <div class="two">
+        <div><label for="pause">Cooldown after cover (s)</label><input id="pause" type="number" step="5" value="60"></div>
+        <div><label for="poll">Polling interval (s)</label><input id="poll" type="number" step="1" value="2"></div>
+      </div>
+      <label for="mode">Execution venue</label>
+      <select id="mode">
+        <option value="paper">Simulated fills</option>
+        <option value="live">Live via local signer</option>
+      </select>
+      <div id="relayBox" style="display:none">
+        <label for="relay">Signer endpoint</label>
+        <input id="relay" placeholder="http://localhost:8787/order">
+      </div>
+
+      <div class="btns">
+        <button class="go" id="bStart">Start engine</button>
+        <button id="bPause" disabled>Halt engine</button>
+        <button id="bClose" disabled>Cover now</button>
+        <button class="stop" id="bReset">Stop and flatten state</button>
+      </div>
+    </div>
+
+    <!-- ======= position ======= -->
+    <div>
+      <div class="rail">
+        <div><span>Net position</span><b id="mSize">0</b></div>
+        <div><span>Break-even, net of fees</span><b id="mBe">—</b></div>
+        <div><span>Cover level</span><b id="mTgt" class="c-mint">—</b></div>
+        <div><span>Next add level</span><b id="mNext" class="c-amber">—</b></div>
+        <div><span>Unrealized P&amp;L</span><b id="mPnl">—</b></div>
+        <div><span>Realized P&amp;L</span><b id="mReal">0.00</b></div>
+      </div>
+
+      <canvas id="cv" width="1000" height="360" aria-label="Mark price with break-even and trigger levels"></canvas>
+
+      <div class="gauge" id="gauge" role="img" aria-label="Exposure used"></div>
+      <div class="glbl"><span id="gtxt">0 / 35 HYPE</span><span id="gstate">cap available</span></div>
+
+      <div class="card sec">
+        <h2>Fills, current cycle</h2>
+        <div id="ladder"><p class="empty">No fills. The opening short is sent when the engine starts.</p></div>
+      </div>
+
+      <div class="card sec">
+        <h2>Event log</h2>
+        <div id="log"></div>
+      </div>
+
+      <div class="card sec">
+        <h2>Closed cycles</h2>
+        <div id="hist"><p class="empty">No cycles recorded.</p></div>
+        <div class="btns" style="grid-template-columns:1fr 1fr">
+          <button id="bCsv">Export CSV</button>
+          <button id="bClear">Clear history</button>
+        </div>
+      </div>
+
+      <p class="note">Adverse-averaging mandate: every add increases exposure while the market moves against the book.
+      A sustained rally fills the 35 HYPE cap and the position stays there until mean reversion, with no stop-loss leg.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const API = "https://api.hyperliquid.xyz/info";
+  // Most punitive perp taker rate on the Hyperliquid schedule: tier 0, base rate, 0.045%.
+  // No volume, staking or referral discount is assumed.
+  const TAKER = 0.00045;
+
+  // ---------- state ----------
+  const S = {
+    run:false, phase:"idle",        // idle | trading | capped | cooldown
+    mark:null, prev:null, ctx:null,
+    entries:[], size:0, be:null, lastPx:null,
+    startedAt:null, cycle:0, realized:0,
+    history:[], series:[], resumeAt:0,
+    timer:null, busy:false, peak:0
+  };
+  const cfg = {};
+
+  function readCfg(){
+    cfg.coin  = $("coin").value.trim().toUpperCase() || "HYPE";
+    cfg.lot   = Math.max(0, +$("lot").value || 0);
+    cfg.max   = Math.max(cfg.lot, +$("maxsz").value || 0);
+    cfg.step  = (+$("step").value || 0)/100;
+    cfg.tp    = (+$("tp").value || 0)/100;
+    cfg.pause = Math.max(0, +$("pause").value || 0)*1000;
+    cfg.poll  = Math.max(1, +$("poll").value || 2)*1000;
+    cfg.fee   = TAKER;
+    cfg.mode  = $("mode").value;
+    cfg.relay = $("relay").value.trim();
+  }
+
+  // ---------- helpers ----------
+  const nf = (v,d=4) => v==null || !isFinite(v) ? "—" : v.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+  const QUOTE = "USDC";
+  // indicative notional, marked at the price passed in
+  const usd = v => v==null || !isFinite(v) ? "\u2014" : v.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const hhmm = t => new Date(t).toLocaleTimeString("en-GB",{hour12:false});
+
+  function log(msg, cls){
+    const el = $("log"), p = document.createElement("p");
+    p.innerHTML = `<span class="t">${hhmm(Date.now())}</span> <span class="${cls||""}">${msg}</span>`;
+    el.appendChild(p);
+    while(el.childElementCount > 400) el.removeChild(el.firstChild);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // ---------- market data ----------
+  async function fetchCtx(coin){
+    const r = await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({type:"metaAndAssetCtxs"})});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const [meta,ctxs] = await r.json();
+    const i = meta.universe.findIndex(u => u.name === coin);
+    if(i < 0) throw new Error("instrument \u201C"+coin+"\u201D not in the perp universe");
+    const c = ctxs[i];
+    return {mark:+c.markPx, mid:+c.midPx, oracle:+c.oraclePx, funding:+c.funding, szDec:meta.universe[i].szDecimals};
+  }
+
+  // ---------- execution ----------
+  // Simulated mode fills at mark. Live mode POSTs to a local signer service that signs
+  // and forwards to /exchange. No private key is ever held in the browser.
+  async function execute(action, size, px){
+    if(cfg.mode === "paper") return {px, live:false};
+    if(!cfg.relay) throw new Error("signer endpoint not set");
+    const r = await fetch(cfg.relay,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({coin:cfg.coin, action, sz:size,
+                           isBuy:action==="close", reduceOnly:action==="close", refPx:px})});
+    if(!r.ok) throw new Error("signer HTTP "+r.status);
+    const j = await r.json();
+    if(j.error) throw new Error("signer: "+j.error);
+    return {px: +j.fillPx || px, live:true};
+  }
+
+  // ---------- state machine ----------
+  function computeBe(){
+    if(!S.size){ S.be = null; return; }
+    const notional = S.entries.reduce((a,e)=>a + e.px*e.sz, 0);
+    const avg = notional / S.size;
+    S.avg = avg;
+    // Short book: cover price X where sz*(avg-X) - taker*sz*avg - taker*sz*X = 0
+    S.be = avg * (1 - cfg.fee) / (1 + cfg.fee);
+  }
+
+  async function openLeg(px){
+    const {px:fill, live} = await execute("short", cfg.lot, px);
+    S.entries.push({t:Date.now(), px:fill, sz:cfg.lot});
+    S.size = +(S.size + cfg.lot).toFixed(8);
+    S.lastPx = fill;
+    if(!S.startedAt){ S.startedAt = Date.now(); S.cycle++; }
+    computeBe();
+    log(`${live?"LIVE":"sim"} · sold ${cfg.lot} ${cfg.coin} @ ${nf(fill)} · position ${S.size} · BE ${nf(S.be)}`, "c-coral");
+    if(S.size + 1e-9 >= cfg.max){
+      S.phase = "capped";
+      log(`exposure cap ${cfg.max} ${cfg.coin} reached — adds suspended, awaiting reversion below ${nf(S.be*(1-cfg.tp))}`, "c-amber");
+    } else S.phase = "trading";
+  }
+
+  async function closeAll(px, reason){
+    const {px:fill, live} = await execute("close", S.size, px);
+    const gross = (S.avg - fill) * S.size;
+    const fees  = cfg.fee * S.size * (S.avg + fill);
+    const net   = gross - fees;
+    S.realized += net;
+    S.history.push({
+      cycle:S.cycle, opened:S.startedAt, closed:Date.now(), fills:S.entries.length,
+      size:S.size, avg:S.avg, be:S.be, exit:fill, gross:gross, fees:fees, net:net,
+      peak:S.peak, reason:reason, venue:live?"live":"sim"
+    });
+    log(`covered ${S.size} ${cfg.coin} @ ${nf(fill)} · ${reason} · net ${net>=0?"+":""}${net.toFixed(2)} USDC`, net>=0?"c-mint":"c-coral");
+    resetCycle();
+    if(S.run){
+      S.phase = "cooldown"; S.resumeAt = Date.now() + cfg.pause;
+      log(`cooldown ${Math.round(cfg.pause/1000)}s before the next cycle`, "c-violet");
+    } else S.phase = "idle";
+    renderHist();
+  }
+
+  function resetCycle(){
+    S.entries=[]; S.size=0; S.be=null; S.avg=null; S.lastPx=null; S.startedAt=null; S.peak=0;
+  }
+
+  async function onPrice(m){
+    if(!S.run) return;
+    if(S.phase === "cooldown"){
+      if(Date.now() < S.resumeAt) return;
+      S.phase = "trading";
+      log("cooldown elapsed, cycle resumed", "c-violet");
+    }
+    if(S.size > 0 && m > S.peak) S.peak = m;
+
+    // step 2 — opening short
+    if(S.size === 0){ await openLeg(m); return; }
+
+    // step 5 — cover takes precedence
+    const target = S.be * (1 - cfg.tp);
+    if(m <= target){ await closeAll(m, `mark <= BE -${(cfg.tp*100).toFixed(2)}%`); return; }
+
+    // step 3 — add at +step from the last fill, subject to the exposure cap
+    const trig = S.lastPx * (1 + cfg.step);
+    if(m >= trig){
+      if(S.size + cfg.lot > cfg.max + 1e-9){
+        if(S.phase !== "capped"){
+          S.phase = "capped";
+          log(`exposure cap ${cfg.max} ${cfg.coin} — add rejected, awaiting reversion`, "c-amber");
+        }
+        return;
+      }
+      await openLeg(m);
+    }
+  }
+
+  // ---------- loop ----------
+  async function tick(){
+    if(S.busy) return;
+    S.busy = true;
+    try{
+      const c = await fetchCtx(cfg.coin);
+      S.prev = S.mark; S.mark = c.mark; S.ctx = c;
+      S.series.push({t:Date.now(), p:c.mark});
+      if(S.series.length > 600) S.series.shift();
+      feed(true);
+      await onPrice(c.mark);
+    }catch(e){
+      feed(false, e.message);
+      log("feed or execution failure: "+e.message, "c-coral");
+      if(String(e.message).includes("signer")){ S.run = false; S.phase = "idle"; log("engine halted on execution failure", "c-coral"); }
+    }finally{
+      S.busy = false; render();
+    }
+  }
+
+  function start(){
+    readCfg();
+    if(cfg.lot <= 0 || cfg.max < cfg.lot){ log("clip size or exposure cap invalid", "c-coral"); return; }
+    if(cfg.mode === "live" && !cfg.relay){ log("live venue selected: set the signer endpoint", "c-coral"); return; }
+    S.run = true;
+    if(S.phase === "idle") S.phase = "trading";
+    clearInterval(S.timer);
+    S.timer = setInterval(tick, cfg.poll);
+    log(`engine started · ${cfg.coin} · ${cfg.lot} per clip · add +${(cfg.step*100).toFixed(2)}% · cover -${(cfg.tp*100).toFixed(2)}% · cap ${cfg.max} · ${cfg.mode==="paper"?"simulated":"LIVE"}`, "c-mint");
+    tick(); render();
+  }
+
+  function pause(){
+    S.run = false; clearInterval(S.timer); S.timer = setInterval(tick, cfg.poll || 2000);
+    log("engine halted · position left open, feed still running", "c-amber"); render();
+  }
+
+  function hardReset(){
+    S.run = false; clearInterval(S.timer); S.timer = null;
+    if(S.size > 0) log(`state cleared with ${S.size} ${cfg.coin} still open, cycle not recorded`, "c-amber");
+    resetCycle(); S.phase = "idle"; render();
+    log("engine stopped, state flattened", "c-violet");
+  }
+
+  // ---------- rendering ----------
+  function feed(ok, msg){
+    const p = $("pFeed");
+    p.className = "pill " + (ok ? "on live" : "off");
+    p.innerHTML = `<i class="dot"></i>${ok ? "feed" : "feed down"}`;
+    if(msg) p.title = msg;
+  }
+
+  function render(){
+    const m = S.mark;
+    const px = $("px");
+    px.innerHTML = (m==null?"—":nf(m,4)) + "<small>USDC</small>";
+    px.className = "px " + (S.prev==null||m===S.prev ? "" : m>S.prev ? "up" : "down");
+    if(S.ctx){
+      $("mid").textContent = nf(S.ctx.mid,4);
+      $("oracle").textContent = nf(S.ctx.oracle,4);
+      $("fund").textContent = (S.ctx.funding*100).toFixed(4)+" %";
+    }
+
+    const st = $("pState");
+    const labels = {idle:"flat", trading:"short", capped:"cap reached", cooldown:"cooldown"};
+    let txt = labels[S.phase] || S.phase;
+    if(S.phase === "cooldown") txt = "cooldown " + Math.max(0, Math.ceil((S.resumeAt-Date.now())/1000)) + "s";
+    if(!S.run && S.phase !== "idle") txt = "halted · " + txt;
+    st.textContent = txt;
+    st.className = "pill " + (S.phase==="capped" ? "warn" : S.run ? "on" : "");
+
+    $("mSize").innerHTML = S.size
+      ? "-" + S.size + " " + (cfg.coin||"HYPE") + `<em>${usd(S.mark ? S.size*S.mark : null)} ${QUOTE}</em>`
+      : "0";
+    $("mBe").textContent = nf(S.be,4);
+    $("mTgt").textContent = S.be ? nf(S.be*(1-cfg.tp),4) : "—";
+    $("mNext").textContent = (S.size && S.size+cfg.lot <= cfg.max+1e-9 && S.lastPx) ? nf(S.lastPx*(1+cfg.step),4) : (S.size ? "capped" : "—");
+
+    const pnl = (S.size && m) ? (S.avg - m)*S.size : null;
+    const e = $("mPnl");
+    e.textContent = pnl==null ? "—" : (pnl>=0?"+":"") + pnl.toFixed(2);
+    e.className = pnl==null ? "" : pnl>=0 ? "c-mint" : "c-coral";
+    const r = $("mReal");
+    r.textContent = (S.realized>=0?"+":"") + S.realized.toFixed(2);
+    r.className = S.realized>=0 ? "c-mint" : "c-coral";
+
+    const pct = cfg.max ? Math.min(100, S.size/cfg.max*100) : 0;
+    renderGauge();
+    $("gtxt").textContent = `${S.size} / ${cfg.max||35} ${cfg.coin||"HYPE"}`
+      + (m ? ` \u00b7 ${usd(S.size*m)} / ${usd((cfg.max||35)*m)} ${QUOTE}` : "");
+    $("hNotional").textContent = m
+      ? `clip ${usd(cfg.lot*m)} \u00b7 cap ${usd((cfg.max||35)*m)} ${QUOTE}, marked at ${nf(m)}`
+      : "\u2014";
+    $("gstate").textContent = pct>=100 ? "capped, awaiting reversion" : `${Math.max(0,Math.floor((cfg.max-S.size)/(cfg.lot||1)))} add(s) remaining`;
+
+    $("bStart").disabled = S.run;
+    $("bPause").disabled = !S.run;
+    $("bClose").disabled = !S.size || S.busy;
+
+    renderLadder(); draw();
+  }
+
+  // one segment per clip, because the ladder itself is discrete
+  function renderGauge(){
+    const g = $("gauge");
+    const slots = Math.max(1, Math.min(60, Math.round((cfg.max||35)/(cfg.lot||1))));
+    const filled = Math.min(slots, Math.round(S.size/(cfg.lot||1)));
+    if(g.childElementCount !== slots) g.innerHTML = "<i></i>".repeat(slots);
+    [...g.children].forEach((el,i) => {
+      el.className = i < filled ? (filled >= slots ? "on max" : "on") : "";
+    });
+  }
+
+  function renderLadder(){
+    const box = $("ladder");
+    if(!S.entries.length){ box.innerHTML = '<p class="empty">No fills. The opening short is sent when the engine starts.</p>'; return; }
+    const rows = S.entries.map((e,i) => {
+      const d = S.mark ? (S.mark - e.px)/e.px*100 : null;
+      return `<tr><td>#${i+1}</td><td>${hhmm(e.t)}</td><td>${e.sz}</td><td>${nf(e.px)}</td><td>${usd(e.px*e.sz)}</td>
+        <td class="${d>0?"c-coral":"c-mint"}">${d==null?"—":(d>0?"+":"")+d.toFixed(2)+" %"}</td>
+        <td class="${d>0?"c-coral":"c-mint"}">${d==null?"—":((e.px-S.mark)*e.sz).toFixed(2)}</td></tr>`;
+    }).join("");
+    box.innerHTML = `<table><thead><tr><th>#</th><th>time</th><th>size</th><th>fill</th><th>notional usdc</th><th>vs mark</th><th>P&amp;L</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  function renderHist(){
+    const box = $("hist");
+    if(!S.history.length){ box.innerHTML = '<p class="empty">No cycles recorded.</p>'; return; }
+    const rows = S.history.slice().reverse().map(h => `<tr>
+      <td>${h.cycle}</td><td>${hhmm(h.opened)}</td><td>${Math.round((h.closed-h.opened)/1000)}s</td>
+      <td>${h.fills}</td><td>${h.size}</td><td>${nf(h.avg)}</td><td>${usd(h.size*h.avg)}</td><td>${nf(h.exit)}</td>
+      <td class="${h.net>=0?"c-mint":"c-coral"}">${(h.net>=0?"+":"")+h.net.toFixed(2)}</td></tr>`).join("");
+    box.innerHTML = `<table><thead><tr><th>cycle</th><th>opened</th><th>duration</th><th>fills</th><th>size</th><th>avg entry</th><th>notional usdc</th><th>cover</th><th>net USDC</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  // ---------- chart ----------
+  function draw(){
+    const cv = $("cv"), g = cv.getContext("2d");
+    const w = cv.width, h = cv.height, pad = 12;
+    g.clearRect(0,0,w,h);
+    const pts = S.series;
+    if(pts.length < 2) return;
+
+    const lvls = [];
+    if(S.be){ lvls.push(S.be, S.be*(1-cfg.tp)); if(S.lastPx) lvls.push(S.lastPx*(1+cfg.step)); }
+    let lo = Math.min(...pts.map(p=>p.p), ...lvls), hi = Math.max(...pts.map(p=>p.p), ...lvls);
+    const m = (hi-lo)*0.12 || hi*0.001; lo -= m; hi += m;
+    const X = i => pad + i*(w-2*pad)/(pts.length-1);
+    const Y = p => h-pad - (p-lo)*(h-2*pad)/(hi-lo);
+
+    const line = (p,color,dash) => {
+      g.save(); g.strokeStyle=color; g.lineWidth=2; g.setLineDash(dash||[]);
+      g.beginPath(); g.moveTo(pad,Y(p)); g.lineTo(w-pad,Y(p)); g.stroke();
+      g.restore();
+    };
+    if(S.be){
+      line(S.be, "#6d958d", [6,5]);
+      line(S.be*(1-cfg.tp), "#97fce4", [2,4]);
+      const b = S.lastPx;
+      if(b && S.size+cfg.lot <= cfg.max+1e-9) line(b*(1+cfg.step), "#ffc46b", [2,4]);
+    }
+    // mark price
+    g.beginPath(); pts.forEach((p,i)=> i?g.lineTo(X(i),Y(p.p)):g.moveTo(X(i),Y(p.p)));
+    g.strokeStyle = "#dff6f0"; g.lineWidth = 2; g.lineJoin="round"; g.stroke();
+    // fills
+    g.fillStyle = "#ed7088";
+    S.entries.forEach(e => {
+      let idx = pts.findIndex(p => p.t >= e.t); if(idx < 0) idx = pts.length-1;
+      g.beginPath(); g.arc(X(idx), Y(e.px), 4, 0, 6.284); g.fill();
+    });
+    // last print
+    const last = pts[pts.length-1];
+    g.fillStyle = "#97fce4"; g.beginPath(); g.arc(X(pts.length-1), Y(last.p), 3.5, 0, 6.284); g.fill();
+    g.font = "12px ui-monospace, monospace"; g.fillStyle = "#6d958d";
+    g.fillText(nf(hi,3), pad+2, pad+11); g.fillText(nf(lo,3), pad+2, h-pad-2);
+  }
+
+  // ---------- CSV ----------
+  function csv(){
+    if(!S.history.length){ log("no cycles to export", "c-amber"); return; }
+    const head = "cycle,opened_utc,closed_utc,duration_s,fills,size,notional_usdc,avg_entry,break_even,cover_px,gross_pnl,fees,net_pnl,cycle_high,reason,venue";
+    const rows = S.history.map(h => [h.cycle, new Date(h.opened).toISOString(), new Date(h.closed).toISOString(),
+      Math.round((h.closed-h.opened)/1000), h.fills, h.size, (h.size*h.avg).toFixed(2), h.avg.toFixed(6), h.be.toFixed(6), h.exit.toFixed(6),
+      h.gross.toFixed(4), h.fees.toFixed(4), h.net.toFixed(4), h.peak.toFixed(6), '"'+h.reason+'"', h.venue].join(","));
+    const blob = new Blob([head+"\n"+rows.join("\n")], {type:"text/csv"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `cycles-${cfg.coin||"HYPE"}-${Date.now()}.csv`;
+    a.click(); URL.revokeObjectURL(a.href);
+    log(`${S.history.length} cycle(s) exported`, "c-violet");
+  }
+
+  // ---------- wiring ----------
+  $("bStart").onclick = start;
+  $("bPause").onclick = pause;
+  $("bReset").onclick = hardReset;
+  $("bClose").onclick = async () => {
+    if(!S.size || !S.mark) return;
+    S.busy = true;
+    try{ await closeAll(S.mark, "manual cover"); }
+    catch(e){ log("cover failed: "+e.message, "c-coral"); }
+    finally{ S.busy = false; render(); }
+  };
+  $("bCsv").onclick = csv;
+  $("bClear").onclick = () => { S.history = []; S.realized = 0; renderHist(); render(); log("history cleared", "c-violet"); };
+  $("mode").onchange = e => { $("relayBox").style.display = e.target.value === "live" ? "block" : "none"; };
+  ["coin","lot","maxsz","step","tp","pause","poll","relay"].forEach(id => {
+    $(id).addEventListener("change", () => { readCfg(); if(S.run && (id==="poll")){ clearInterval(S.timer); S.timer=setInterval(tick,cfg.poll);} render(); });
+  });
+  window.addEventListener("resize", draw);
+
+  // cold start: market data only, no orders
+  readCfg();
+  render();
+  log("ready · market data running, no order sent until the engine is started", "c-violet");
+  tick();
+  S.timer = setInterval(tick, cfg.poll);
+  setInterval(() => { if(S.phase === "cooldown") render(); }, 500);
+})();
+</script>
+</body>
+</html>
